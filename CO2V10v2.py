@@ -1,5 +1,6 @@
-#simple rheometer flow
+###############################################################################
 
+### basic imports
 """Backend supported: tensorflow.compat.v1, tensorflow, pytorch, jax"""
 import deepxde as dde
 import numpy as np
@@ -13,204 +14,167 @@ from scipy import special as spe
 #from deepxde.backend import tfhelper
 #from deepxde.boundarycondition import BC
 
-
+###############################################################################
 
 dde.config.set_default_float("float64")
 dde.config.real.set_float64()
-#Import BC at some point
 
-#viscosity initial guess
-#eta should be on order of 1?
-#eta should be provided as eta*etaMax to scale eta
-#eta =  1
 
 
-#########################
-#some properties of system
-#radius in meters
-R = 1 #5 cm
-#height in meteres
-H = 0.05 #1 mm
 
-AngularVelocity = 1
+###############################################################################
+#make class for actual PDE
+class CO2Sim():
 
-#or eta is the exponent of viscosity
-etaMax = 20
-#etaexp = dde.Variable(0.1, dtype=tf.float64)
-#eta = 46
-rho = 1000
-torqueOut = 41887.9
-expectedEta = 1000
-D = 5e-4
-zeroShear = 1
-#eta = 10**etaexp
-maxEta = 10
-#######################
-#setting up concentration profile of system
-etaSample = 5
 
+    def __init__(self,name):
 
-#bessel fxn
-numberofZeroes = 5
+        ## system variables
+        self.R = 1
+        self.H = 0.05
+        self.angularVelocity = 1
+        self.name = name
+        self.an = self.GenerateAn(10)
+        #self.bc = self.generateBC()
 
-a_n = tf.constant(spe.jn_zeros(0, numberofZeroes), dtype=tf.float64)
-a_n = tf.reshape(a_n, [1, 1,-1])
-#radial fxn of concentration v review
+        #be able to call system variables:
 
-def concentrationSln(r,t,R,a_n,D):
-    #r = tf.reshape(r1,[-1,-1,1])
-    #t = tf.reshape(t1,[-1,-1,1])
-    bessel_result = tf.math.special.bessel_j0(a_n * r / R)/(tf.math.special.bessel_j1(a_n)*a_n)*tf.exp(-a_n**2*D*t/R**2)
-    result_sum = 1-2*tf.reduce_sum(bessel_result, axis=2)
 
 
 
-    return result_sum
 
 
+        #define eta. Should be a NP array
 
-def concentrationToViscosity(concentration, zeroShear):
-    return concentration + zeroShear
+        #### setting up domain
+        self.geom = dde.geometry.Interval(0.0001, self.R)
+        self.timedomain = dde.geometry.TimeDomain(0, 2)
+        self.geomtime = dde.geometry.GeometryXTime(self.geom, self.timedomain)
+        self.bc = self.generateBC()
 
-def calcEta(r,t,R,a_n,D,zeroShear):
-    return concentrationToViscosity(concentrationSln(r,t,R,a_n,D), zeroShear)
+        ### setting up model
+        self.data = dde.data.TimePDE(
+            self.geomtime,
+            self.rheometerPlate,
+            self.bc,
+            num_domain=8000,
+            num_boundary=100,
+            num_initial = 100
+            #solution = slnfuc
+            #auxiliary_var_function=ex_func2,
+        )
 
+        self.net = dde.nn.FNN([2] + [50] * 4 + [1], "tanh", "Glorot uniform")
+        self.net.apply_output_transform(lambda x, y: y/(self.H/(2*3.1415*1*self.angularVelocity*self.R**3)))
+        self.model = dde.Model(self.data, self.net)
 
 
 
-scaleFactor = H/(2*3.1415*expectedEta*AngularVelocity*R**3)
-#########################
-#make domain
-#our domain is pseudo steady state, time invariant. Axisymmetric wrt theta
-#geom = dde.geometry.Rectangle([0, 0], [R, H])
+###############################################################################
+##backend/ generation of system constants/math stuff
 
+    #makes zeros of the bessel function
+    def GenerateAn(self,numberOfZeros):
+        a_n = tf.constant(spe.jn_zeros(0, numberOfZeros), dtype=tf.float64)
+        a_n = tf.reshape(a_n, [1, 1,-1])
+        return a_n
 
-#define our sysyem?
-def rheometerPlate(x,y):
-    Tau =  y[:, 0:1]
-    x1 =tf.reshape(x, [-1,-1,1])
 
-    r = x[:,0:1]
-    t = x[:, 1:2]
+    #defines the concentration of co2 analytically
+    def concentrationSln(self,r,t,R,a_n,D):
+        #r = tf.reshape(r1,[-1,-1,1])
+        #t = tf.reshape(t1,[-1,-1,1])
+        bessel_result = tf.math.special.bessel_j0(a_n * r / R)/(tf.math.special.bessel_j1(a_n)*a_n)*tf.exp(-a_n**2*D*t/R**2)
+        result_sum = 1-2*tf.reduce_sum(bessel_result, axis=2)
 
-    #print("Shape of tensor:", tf.shape(t))
-    #r1 = x1[:,0:1,:]
-    #t1 = x1[:, 1:,:]
-    #print("Shape of tensor:", tf.shape(t1))
 
-    Tau_r =  dde.grad.jacobian(y,x,i=0)
 
+        return result_sum
 
-    #eta = concentrationToViscosity(concentration,zeroShear)
-    eta = 5
+    #function that defines viscosity as function of concentration
+    def concentrationToViscosity(self,concentration, zeroShear):
+        return concentration + zeroShear
 
 
-    #etaSample = eta
 
+###############################################################################
+#defining boundaries
 
-    #eqn = ()
-    return (Tau_r*H/(2*3.1415*(eta)*AngularVelocity*R**3)-(x/R)**2/R)
-    #return (eta*dVtheta_zz)
-    #return (eta*dVtheta_r_r)
 
+    def boundary(self,_, on_initial):
+        return on_initial
 
+    def inside(self,x, on_boundary):
+        return on_boundary and np.equal(x[0], 0)
+    def outside(self,x, on_boundary):
+        return on_boundary and np.equal(x[0],R)
 
-geom = dde.geometry.Interval(0.0001, R)
-timedomain = dde.geometry.TimeDomain(0, 2)
-geomtime = dde.geometry.GeometryXTime(geom, timedomain)
+    def generateBC(self):
+        bc = dde.icbc.DirichletBC(self.geomtime, lambda x: 0, lambda _, on_initial: on_initial, component=0)
+        #bc = dde.icbc.DirichletBC(geomtime, lambda x: torqueOut, lambda _, on_initial: on_initial, component=0)
+        #bc2 = dde.icbc.DirichletBC(geomtime, lambda x: torqueOut, outside)
+        bc3 = dde.icbc.NeumannBC(self.geomtime, lambda x: 0, lambda _, on_initial: on_initial, component=0)
+        return [bc,bc3]
 
 
-def boundary(_, on_initial):
-    return on_initial
 
-#ic1 = dde.icbc.IC(geom, lambda X: 1, boundary, component=0)
 
+###############################################################################
+#def system
+    #rheometer plate
+    def rheometerPlate(self,x,y):
+        Tau =  y[:, 0:1]
+        x1 =tf.reshape(x, [-1,-1,1])
 
-def inside(x, on_boundary):
-    return on_boundary and np.equal(x[0], 0)
-def outside(x, on_boundary):
-    return on_boundary and np.equal(x[0],R)
+        r = x[:,0:1]
+        t = x[:, 1:2]
 
+        Tau_r =  dde.grad.jacobian(y,x,i=0)
 
-##################################
-#Boundary conditions
 
-#inside, torqu needs to be  =0
-bc = dde.icbc.DirichletBC(geomtime, lambda x: 0, lambda _, on_initial: on_initial, component=0)
-#bc = dde.icbc.DirichletBC(geomtime, lambda x: torqueOut, lambda _, on_initial: on_initial, component=0)
-#bc2 = dde.icbc.DirichletBC(geomtime, lambda x: torqueOut, outside)
-bc3 = dde.icbc.NeumannBC(geomtime, lambda x: 0, lambda _, on_initial: on_initial, component=0)
+        eta = 5
 
 
 
 
-#ic = dde.icbc.IC(geomtime, lambda x: 0, lambda _, on_initial: on_initial)
+        #eqn = ()
+        return (Tau_r*self.H/(2*3.1415*(eta)*self.angularVelocity*self.R**3)-(r/self.R)**2/self.R)
+        #return (eta*dVtheta_zz)
+        #return (eta*dVtheta_r_r)
 
+#def model running
 
+    #BFGS, weights should be given in array format
+    def runBFGS(self, iterations, weights):
+        self.model.compile("L-BFGS",loss_weights=weights)
+        #model.train_step.optimizer_kwargs = {'options': {'maxfun': 1e5, 'ftol': 1e-20, 'gtol': 1e-20, 'eps': 1e-20, 'iprint': -1, 'maxiter': 1e5}}
+        dde.optimizers.config.set_LBFGS_options(
+        maxcor=100,
+        ftol=1.0e-35,
+        gtol=1.0e-35,
+        maxiter=50000,
+        maxfun=50000,
+        maxls=50,
+        )
 
+        self.losshistory, self.train_state = self.model.train(iterations=iterations)
 
+    #BFGS, weights should be given in array format, learning rate given as float
+    def runAdam(self, iterations, weights, learningRate):
 
+        self.model.compile(
+        "adam", lr=learningRate,loss_weights=weights
+        )
+        self.losshistory, self.train_state = self.model.train(iterations=iterations)
 
+    def savePlot(self):
+        dde.saveplot(self.losshistory, self.train_state, issave=True, isplot=True)
 
 
-data = dde.data.TimePDE(
-    geomtime,
-    rheometerPlate,
-    [bc,bc3],
-    num_domain=8000,
-    num_boundary=100,
-    num_initial = 100
-    #solution = slnfuc
-    #auxiliary_var_function=ex_func2,
-)
 
-# Define your PDE and BCs here
-# ...
-dde.config.set_default_float("float64")
 
-net = dde.nn.FNN([2] + [50] * 4 + [1], "tanh", "Glorot uniform")
-net.apply_output_transform(lambda x, y: y/(H/(2*3.1415*1*AngularVelocity*R**3)))
-#net.apply_input_transform(lambda x, y: x*R)
-model = dde.Model(data, net)
 
-#external_trainable_variables = [eta]
-#variable = dde.callbacks.VariableValue(
-#    etaexp, period=200, filename="variables1.dat"
-#)calcEta(x[:,0:1],x[:, 1:],R,a_n,D,zeroShear)
-
-
-#plot_boundary_conditions(data)
-n = 20000
-name = "viscosityModel-non-Dim-CENTER0-5layer-vsico1000-2"
-# train adam
-"""
-
-"""
-
-model.compile(
-"adam", lr=0.005,loss_weights=[10, 1, 1]
-)
-losshistory, train_state = model.train(iterations=n)
-
-
-
-model.compile("L-BFGS",loss_weights=[10, 1, 1])
-#model.train_step.optimizer_kwargs = {'options': {'maxfun': 1e5, 'ftol': 1e-20, 'gtol': 1e-20, 'eps': 1e-20, 'iprint': -1, 'maxiter': 1e5}}
-dde.optimizers.config.set_LBFGS_options(
-maxcor=100,
-ftol=1.0e-35,
-gtol=1.0e-35,
-maxiter=50000,
-maxfun=50000,
-maxls=50,
-)
-
-
-
-
-
-
-losshistory, train_state = model.train(iterations=50000)
-
-
-dde.saveplot(losshistory, train_state, issave=True, isplot=True)
+newSim = CO2Sim("file")
+newSim.runAdam(20000,[10,1,1], 0.005)
+newSim.runBFGS(20000,[10,1,1])
+newSim.savePlot()
