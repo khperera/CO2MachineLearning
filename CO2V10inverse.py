@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from scipy import special as spe
+import pandas as pd
 #from deepxde.backend import tfhelper
 #from deepxde.boundarycondition import BC
 
@@ -47,6 +48,9 @@ class CO2Sim():
         self.calcTorque = 167.55
         #be able to call system variables:
 
+        self.location = r"I:/My Drive/Research/OtherProjects/HiPressure/ML/TrainingData/TrainingData.csv"
+        self.timeData, self.torqueData = self.importData(self.location)
+
         #define eta. Should be a NP array
 
         #### setting up domain
@@ -82,6 +86,12 @@ class CO2Sim():
 ###############################################################################
 ##backend/ generation of system constants/math stuff
 
+
+    def importData(self, location):
+        Data = pd.read_csv(location)
+        torque = Data["Torque"]
+        time = Data["Time"]
+        return time, torque
     #makes zeros of the bessel function
     def GenerateAn(self,numberOfZeros):
         a_n = tf.constant(spe.jn_zeros(0, numberOfZeros), dtype=tf.float64)
@@ -134,6 +144,10 @@ class CO2Sim():
 
     def initialCondition(self,x):
         return 2*3.14*self.etaInit*self.angularVelocity*x[:, 0:1]**3/3/self.H
+        #newSim.runBFGS(20000,[100,1,1,100])
+
+#newSim.plotEta()
+
 
 
 
@@ -164,8 +178,8 @@ class CO2Sim():
         res = self.H/(2*3.1415*(self.eta)*self.angularVelocity*self.R**3)
         return ( y/res)
 ###############################################################################
+#def model running and saving models
 
-#def model running
 
     #BFGS, weights should be given in array format
     def runBFGS(self, iterations, weights):
@@ -195,6 +209,7 @@ class CO2Sim():
 
 
 ###############################################################################
+#debugging stuff
     def plotEta(self):
         fig = plt.figure()
 
@@ -214,12 +229,6 @@ class CO2Sim():
 
 
 newSim = CO2Sim("file")
-#newSim.runBFGS(10000,[100,1,1,1])
-
 newSim.runAdam(10000,[1,1,1,1,1], 0.005)
 newSim.runBFGS(10000,[1,1,1,1,1])
-
-#newSim.runAdam(10000,[100,1,1,100], 0.005)
-#newSim.runBFGS(20000,[100,1,1,100])
-#newSim.plotEta()
 newSim.savePlot()
