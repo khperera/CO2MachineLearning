@@ -6,7 +6,7 @@ import deepxde as dde
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
 from tensorflow import keras
-
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -31,23 +31,22 @@ class CO2Sim():
 
         ## system variables
         self.R = 1
+        self.Rmin = 0.0001
         self.H = 0.05
         self.angularVelocity = 1
         self.name = name
         self.an = self.GenerateAn(10)
-        #self.bc = self.generateBC()
-
+        #eta will switch to numpy array later on
+        self.eta = 4
+        self.etaInit = 4
+        self.r = 4
+        self.t = 1
         #be able to call system variables:
-
-
-
-
-
 
         #define eta. Should be a NP array
 
         #### setting up domain
-        self.geom = dde.geometry.Interval(0.0001, self.R)
+        self.geom = dde.geometry.Interval(self.Rmin, self.R)
         self.timedomain = dde.geometry.TimeDomain(0, 2)
         self.geomtime = dde.geometry.GeometryXTime(self.geom, self.timedomain)
         self.bc = self.generateBC()
@@ -57,15 +56,16 @@ class CO2Sim():
             self.geomtime,
             self.rheometerPlate,
             self.bc,
-            num_domain=8000,
+            num_domain=800,
             num_boundary=100,
             num_initial = 100
             #solution = slnfuc
             #auxiliary_var_function=ex_func2,
         )
+        print(self.eta)
 
         self.net = dde.nn.FNN([2] + [50] * 4 + [1], "tanh", "Glorot uniform")
-        self.net.apply_output_transform(lambda x, y: y/(self.H/(2*3.1415*1*self.angularVelocity*self.R**3)))
+        self.net.apply_output_transform(self.transformFxn)
         self.model = dde.Model(self.data, self.net)
 
 
@@ -95,7 +95,7 @@ class CO2Sim():
     def concentrationToViscosity(self,concentration, zeroShear):
         return concentration + zeroShear
 
-
+    #def dummyEta()
 
 ###############################################################################
 #defining boundaries
@@ -105,42 +105,53 @@ class CO2Sim():
         return on_initial
 
     def inside(self,x, on_boundary):
-        return on_boundary and np.equal(x[0], 0)
+        return on_boundary and np.equal(x[0], self.Rmin)
     def outside(self,x, on_boundary):
         return on_boundary and np.equal(x[0],R)
 
     def generateBC(self):
-        bc = dde.icbc.DirichletBC(self.geomtime, lambda x: 0, lambda _, on_initial: on_initial, component=0)
-        #bc = dde.icbc.DirichletBC(geomtime, lambda x: torqueOut, lambda _, on_initial: on_initial, component=0)
+        bc = dde.icbc.DirichletBC(self.geomtime, lambda x: 0, self.inside, component=0)
+        #bc = dde.icbc.DirichletBC(self.geom, lambda x: 0, self.inside)
+        #bc3 = dde.icbc.NeumannBC(self.geom, lambda x: 0, self.inside)
+        ic = dde.icbc.IC(self.geomtime, self.initialCondition,
+            lambda _, on_initial: on_initial
+            )
         #bc2 = dde.icbc.DirichletBC(geomtime, lambda x: torqueOut, outside)
-        bc3 = dde.icbc.NeumannBC(self.geomtime, lambda x: 0, lambda _, on_initial: on_initial, component=0)
+        bc3 = dde.icbc.NeumannBC(self.geomtime, lambda x: 0, self.inside, component=0)
         return [bc,bc3]
 
 
-
+    def initialCondition(self,x):
+        return 2*3.14*self.etaInit*self.angularVelocity*x[:, 0:1]**3/3/self.H
 
 ###############################################################################
 #def system
     #rheometer plate
     def rheometerPlate(self,x,y):
         Tau =  y[:, 0:1]
-        x1 =tf.reshape(x, [-1,-1,1])
+        #x1 =tf.reshape(x, [-1,-1,1])
 
         r = x[:,0:1]
         t = x[:, 1:2]
-
+        self.r = r
+        self.t = t
         Tau_r =  dde.grad.jacobian(y,x,i=0)
 
-
-        eta = 5
+        eta = self.etaInit+t/2*100
+        #eta = 5
 
 
 
 
         #eqn = ()
-        return (Tau_r*self.H/(2*3.1415*(eta)*self.angularVelocity*self.R**3)-(r/self.R)**2/self.R)
+        return (Tau_r*self.H/(2*3.1415*(self.etaInit)*self.angularVelocity*self.R**3)-((r/self.R)**2/self.R))
         #return (eta*dVtheta_zz)
         #return (eta*dVtheta_r_r)
+
+    def transformFxn(self, x, y):
+        res = self.H/(2*3.1415*(self.etaInit)*self.angularVelocity*self.R**3)
+        return (res * y)
+###############################################################################
 
 #def model running
 
@@ -169,12 +180,31 @@ class CO2Sim():
 
     def savePlot(self):
         dde.saveplot(self.losshistory, self.train_state, issave=True, isplot=True)
+###############################################################################
+    def plotEta(self):
+        fig = plt.figure()
+
+        ax = fig.add_subplot(111, projection='3d')
+
+        ax.scatter(self.r.numpy(), self.t.numpy(), self.eta.numpy(), color='blue')
 
 
+        ax.set_xlabel('radius')
+        ax.set_ylabel('time')
+        ax.set_zlabel('Viscosity')
+        plt.show()
+    def print(self):
+        tf.print(self.eta, output_stream=sys.stdout)
+        print("HELLO",self.eta)
 
 
 
 newSim = CO2Sim("file")
-newSim.runAdam(20000,[10,1,1], 0.005)
-newSim.runBFGS(20000,[10,1,1])
+newSim.runAdam(10000,[100,1,1], 0.005)
+newSim.print()
+newSim.runBFGS(10000,[100,1,1])
+newSim.print()
+#newSim.runAdam(10000,[100,1,1,100], 0.005)
+#newSim.runBFGS(20000,[100,1,1,100])
+#newSim.plotEta()
 newSim.savePlot()
