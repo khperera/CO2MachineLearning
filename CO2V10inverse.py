@@ -38,9 +38,13 @@ class CO2Sim():
         self.name = name
         self.an = self.GenerateAn(10)
         #eta will switch to numpy array later on
-        #try to calculate etaMax
-        self.etaexp = dde.Variable(0.1, dtype=tf.float64)
-        self.eta = 10**self.etaexp
+        #eta will be in the form of mx+b, where x is time. Guess m and b. m = 0.6,
+
+
+        #self.etaexp = dde.Variable(0.1, dtype=tf.float64)
+        #self.eta = 10**self.etaexp
+        self.m = dde.Variable(0.1, dtype=tf.float64)
+        self.b = dde.Variable(0.1, dtype=tf.float64)
 
         self.etaInit = 4
         self.r = 4
@@ -48,8 +52,10 @@ class CO2Sim():
         self.calcTorque = 167.55
         #be able to call system variables:
 
-        self.location = r"I:/My Drive/Research/OtherProjects/HiPressure/ML/TrainingData/TrainingData.csv"
-        self.timeData, self.torqueData = self.importData(self.location)
+
+
+        self.location = "./TrainingData.csv"
+        self.xData, self.torqueData = self.importData(self.location)
 
         #define eta. Should be a NP array
 
@@ -71,9 +77,9 @@ class CO2Sim():
             #auxiliary_var_function=ex_func2,
         )
 
-        self.external_trainable_variables = [self.eta]
+        self.external_trainable_variables = [self.m,self.b]
         self.variable = dde.callbacks.VariableValue(
-            self.etaexp, period=200, filename="variables1.dat"
+            self.external_trainable_variables, period=200, filename="variables1.dat"
         )
 
 
@@ -89,9 +95,21 @@ class CO2Sim():
 
     def importData(self, location):
         Data = pd.read_csv(location)
-        torque = Data["Torque"]
-        time = Data["Time"]
-        return time, torque
+        torque = [(Data["tau"])]
+        #print(torque)
+        time = [(Data["t"])]
+        #print(time)
+
+        r = [(Data["r"])]
+        #print(r)
+        #R, T = np.meshgrid(r, time)
+        r = np.reshape(r, (-1, 1))
+        t = np.reshape(time, (-1, 1))
+        Torque =  np.reshape(torque, (-1, 1))
+
+        return np.hstack((r,t)), Torque
+
+
     #makes zeros of the bessel function
     def GenerateAn(self,numberOfZeros):
         a_n = tf.constant(spe.jn_zeros(0, numberOfZeros), dtype=tf.float64)
@@ -114,7 +132,6 @@ class CO2Sim():
     def concentrationToViscosity(self,concentration, zeroShear):
         return concentration + zeroShear
 
-    #def dummyEta()
 
 ###############################################################################
 #defining boundaries
@@ -130,16 +147,17 @@ class CO2Sim():
 
     def generateBC(self):
         bc = dde.icbc.DirichletBC(self.geomtime, lambda x: 0, self.inside, component=0)
-        #bc = dde.icbc.DirichletBC(self.geom, lambda x: 0, self.inside)
-        #bc3 = dde.icbc.NeumannBC(self.geom, lambda x: 0, self.inside)
         ic = dde.icbc.IC(self.geomtime, self.initialCondition,
             lambda _, on_initial: on_initial
             )
-        bc2 = dde.icbc.DirichletBC(self.geomtime, lambda x: self.calcTorque, self.outside)
+        #bc2 = dde.icbc.DirichletBC(self.geomtime, lambda x: self.calcTorque, self.outside)
         bc3 = dde.icbc.NeumannBC(self.geomtime, lambda x: 0, self.inside, component=0)
-        #bc2 = dde.icbc.NeumannBC(self.geomtime, lambda x: 0, self.inside, component=0)
 
-        return [bc,bc3, bc2, ic]
+        #data from csv
+
+        observation_BC =  dde.icbc.PointSetBC(self.xData, self.torqueData)
+
+        return [bc,bc3, ic,observation_BC]
 
 
     def initialCondition(self,x):
@@ -170,20 +188,26 @@ class CO2Sim():
 
 
         #eqn = ()
-        return (Tau_r*self.H/(2*3.1415*(self.eta)*self.angularVelocity*self.R**3)-((r/self.R)**2))
+        return (Tau_r*self.H/(2*3.1415*(self.etaFunction(x))*self.angularVelocity*self.R**3)-((r/self.R)**2))
         #return (eta*dVtheta_zz)
         #return (eta*dVtheta_r_r)
 
     def transformFxn(self, x, y):
-        res = self.H/(2*3.1415*(self.eta)*self.angularVelocity*self.R**3)
+        res = self.H/(2*3.1415*(self.etaFunction(x))*self.angularVelocity*self.R**3)
         return ( y/res)
+
+
+    #test function of eta. See if we can geuess what b and m are?
+    def etaFunction(self,x):
+
+        return x[:,1:2]*self.m+self.b
 ###############################################################################
 #def model running and saving models
 
 
     #BFGS, weights should be given in array format
     def runBFGS(self, iterations, weights):
-        self.model.compile("L-BFGS",loss_weights=weights,external_trainable_variables=self.etaexp)
+        self.model.compile("L-BFGS",loss_weights=weights,external_trainable_variables=self.external_trainable_variables)
         #model.train_step.optimizer_kwargs = {'options': {'maxfun': 1e5, 'ftol': 1e-20, 'gtol': 1e-20, 'eps': 1e-20, 'iprint': -1, 'maxiter': 1e5}}
         dde.optimizers.config.set_LBFGS_options(
         maxcor=100,
@@ -200,7 +224,7 @@ class CO2Sim():
     def runAdam(self, iterations, weights, learningRate):
 
         self.model.compile(
-        "adam", lr=learningRate,loss_weights=weights,external_trainable_variables=self.etaexp
+        "adam", lr=learningRate,loss_weights=weights,external_trainable_variables=self.external_trainable_variables
         )
         self.losshistory, self.train_state = self.model.train(iterations=iterations,callbacks = [self.variable])
 
