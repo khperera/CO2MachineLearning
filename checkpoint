@@ -1,0 +1,2 @@
+model_checkpoint_path: "viscosityModel-non-Dim-CENTER0-5layer-vsico1000-2-pt2-105388.ckpt"
+all_model_checkpoint_paths: "viscosityModel-non-Dim-CENTER0-5layer-vsico1000-2-pt2-105388.ckpt"

@@ -12,6 +12,10 @@ import numpy as np
 import tensorflow as tf
 from scipy import special as spe
 import pandas as pd
+from scipy.optimize import curve_fit, minimize
+
+
+from CO2Fxn import fitCrossAndWLF
 #from deepxde.backend import tfhelper
 #from deepxde.boundarycondition import BC
 
@@ -19,7 +23,6 @@ import pandas as pd
 
 dde.config.set_default_float("float64")
 dde.config.real.set_float64()
-
 
 
 
@@ -37,14 +40,19 @@ class CO2Sim():
         self.angularVelocity = 1
         self.name = name
         self.an = self.GenerateAn(10)
+        self.CrossParams = [1.491095, 6.56460753e-1, 8.75440717e3, 25]
+        self.Temperature = 100
         #eta will switch to numpy array later on
         #eta will be in the form of mx+b, where x is time. Guess m and b. m = 0.6,
 
+        #solubility viscoisty models
+        self.SolubilityViscModel = fitCrossAndWLF("./CombinedDataPS_p2.xlsx")
+        self.SolubilityViscModel.fitDataTotal()
 
         #self.etaexp = dde.Variable(0.1, dtype=tf.float64)
         #self.eta = 10**self.etaexp
-        self.m = dde.Variable(0.1, dtype=tf.float64)
-        self.b = dde.Variable(0.1, dtype=tf.float64)
+        #self.m = dde.Variable(0.1, dtype=tf.float64)
+        #self.b = dde.Variable(0.1, dtype=tf.float64)
 
         self.etaInit = 4
         self.r = 4
@@ -101,6 +109,7 @@ class CO2Sim():
         #print(time)
 
         r = [(Data["r"])]
+        self.Temperature = Data["Temperature"].mean()
         #print(r)
         #R, T = np.meshgrid(r, time)
         r = np.reshape(r, (-1, 1))
@@ -118,9 +127,14 @@ class CO2Sim():
 
 
     #defines the concentration of co2 analytically
-    def concentrationSln(self,r,t,R,a_n,D):
-        #r = tf.reshape(r1,[-1,-1,1])
-        #t = tf.reshape(t1,[-1,-1,1])
+    def concentrationSln(self,x):
+        r = tf.reshape(x[:,0:1],[-1,-1,1])
+        t = tf.reshape(x[:,1:2],[-1,-1,1])
+
+        R = self.R
+        D = self.D
+        a_n = self.an
+
         bessel_result = tf.math.special.bessel_j0(a_n * r / R)/(tf.math.special.bessel_j1(a_n)*a_n)*tf.exp(-a_n**2*D*t/R**2)
         result_sum = 1-2*tf.reduce_sum(bessel_result, axis=2)
 
@@ -192,15 +206,42 @@ class CO2Sim():
         #return (eta*dVtheta_zz)
         #return (eta*dVtheta_r_r)
 
+
+    def rheometerPlateCO2Diff(self,x,y):
+        Tau =  y[:, 0:1]
+        #x1 =tf.reshape(x, [-1,-1,1])
+
+        r = x[:,0:1]
+        t = x[:, 1:2]
+
+        Tau_r =  dde.grad.jacobian(y,x,i=0)
+
+        #given nondimensionalConcentration
+        concentration = concentrationSln(x)
+        shiftFactorT = self.SolubilityViscModel.runWLFModelT(x, self.Temperature)
+        shiftFactorS = self.SolubilityViscModel.runWLFModels(x, concentration)
+        #give shear rate, get viscosity
+        ViscosityNaught = self.SolubilityViscModel.CrossModelOut(x[:,0:1]*self.angularVelocity/self.H)
+
+
+
+
+        #eta = 5
+
+
+
+
+        #eqn = ()
+        return (Tau_r*self.H/(2*3.1415*(self.etaFunction(x))*self.angularVelocity*self.R**3)-((r/self.R)**2))
+        #return (eta*dVtheta_zz)
+        #return (eta*dVtheta_r_r)
+
     def transformFxn(self, x, y):
         res = self.H/(2*3.1415*(self.etaFunction(x))*self.angularVelocity*self.R**3)
         return ( y/res)
 
 
-    #test function of eta. See if we can geuess what b and m are?
-    def etaFunction(self,x):
 
-        return x[:,1:2]*self.m+self.b
 ###############################################################################
 #def model running and saving models
 
@@ -249,10 +290,49 @@ class CO2Sim():
     def print(self):
         tf.print(self.eta, output_stream=sys.stdout)
         print("HELLO",self.eta)
+###############################################################################
+#data for models
+
+    #returns viscosity given cross parameter models and shear rate. Done for 0 Bar. Takes in shift factor too
+    def crossModel(self,x, crossParams, shiftFactor):
+        k,n,viscoZero, viscoInf = crossParams
+        differenceInVisc = viscoZero - viscoInf
+        shearRate = x[:,0:1]*self.angularVelocity/self.H*shiftFactor
+        return (differenceInVisc/(1+(k*shearRate)**n)+viscoZero)/shiftFactor
 
 
+    #linear test function of eta. See if we can guess b and m ?
+    #proven we can do this.
+    def etaFunction(self,x):
+
+        return x[:,1:2]*self.m+self.b
+
+
+    #import data from excel. Returns a model that takes in pressure and temperature. This will be run once to get max solubility for a run.
+    def importSolubilityModel(self, locationOfData):
+        dataForPS = pd.read_excel(path, header = [0])
+        x= DataForPS["Pressure (MPa)"]
+        y=DataForPS["Temperature (K)"]
+        z=DataForPS["Solubility"]
+        Model = SmoothBivariateSpline(x,y,z,kx=2,ky=2, s = 0.0001,eps=0.02)
+        return Model
+
+    #returns a solubility given a pressure and temeprature.
+    def estimateSolubility(self, Model, Temp, Pressure):
+        pass
+
+    #shift factor for solubility data.
+    def defImportShiftFactor(self, WLFParams, solubility):
+        C1, C2 = WLFParams
+        return 10**(-C1*(solubility-0)/(C2+solubility-0))
+
+
+
+
+#sixTBar.plotCompareData2("loc")
 
 newSim = CO2Sim("file")
+
 newSim.runAdam(10000,[1,1,1,1,1], 0.005)
 newSim.runBFGS(10000,[1,1,1,1,1])
 newSim.savePlot()

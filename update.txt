@@ -1,0 +1,1 @@
+This folder we are going to non-dimensionalize the equation and see if it works better.

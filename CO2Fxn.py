@@ -32,6 +32,7 @@ class fitCrossAndWLF():
         self.PRef = 0
         self.SRef = 0
         self.mini = 199999999999999999999999999
+        self.Temperature = 100
 
 ############################################################################################################################################################################
 #preprocessing
@@ -93,7 +94,7 @@ class fitCrossAndWLF():
 
         optimizationResult = minimize(self.WLFCrossModelPressure, parameters,options = {"maxiter":50000, "ftol":1e-24}, bounds = Bounds, method='L-BFGS-B', tol=1e-12)
 
-        print(list(optimizationResult.x), optimizationResult.success, optimizationResult.message)
+        #print(list(optimizationResult.x), optimizationResult.success, optimizationResult.message)
         self.mostRecentParams = optimizationResult.x
         return self.mostRecentParams
 
@@ -107,6 +108,7 @@ class fitCrossAndWLF():
 
     def plotSolubilityData(self):
         pass
+
 
 
 
@@ -289,6 +291,14 @@ class fitCrossAndWLF():
         df["Complex viscosity"]= ((zeroS-infS)/(1+(k*df["Angular Frequency"])**n)+infS)
         return df
 
+    def workingWLFCrossModel3(self,x,params):
+        TRef = self.TRef
+        C1,C2,C1s,C2s,k,n,zeroS,infS = params
+
+        #df["at"] = 10**(-C1*(df["Temperature"]-TRef)/(C2+df["Temperature"]-TRef))
+        output = ((zeroS-infS)/(1+(k*x)**n)+infS)
+        return output
+
 
 ####################################################################
 #user functions
@@ -301,6 +311,22 @@ class fitCrossAndWLF():
     def fitDataTotal(self):
 
         return self.fitWLFCrossModelPressure(self.ReadData)
+    #Returns a shift factor for T
+
+    def runWLFModelT(self, x, T):
+        params = self.mostRecentParams
+        return self.WLFModel(x,Temperature,self.TRef,params[0],params[1])
+
+    #Returns a shift factor for S
+    def runWLFModelS(self, x, S):
+        params = self.mostRecentParams
+        return self.WLFModel(x,S,self.SRef,params[2],params[3])
+
+    def CrossModelOut(self,x):
+        params = self.mostRecentParams
+        return self.workingWLFCrossModel3(x,params)
+
+
 
 ##################################################################
 
