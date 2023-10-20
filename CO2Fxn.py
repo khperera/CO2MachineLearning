@@ -47,10 +47,30 @@ class fitCrossAndWLF():
     def importSolubilityModel(self,location):
         DataForPS = pd.read_excel(location, header = [0])
         #print(DataForPS)
+
         x= DataForPS["Pressure (MPa)"]/0.1
         y=DataForPS["Temperature (K)"]-273
         z=DataForPS["Solubility"]
         Model = SmoothBivariateSpline(x,y,z,kx=2,ky=2, s = 0.0001,eps=0.02)
+
+        """
+
+        fig = plt.figure()
+
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(x, y, z, color='blue')
+        x_range = np.linspace(0, 400, 50)
+        y_range = np.linspace(50, 200,50)
+        X, Y = np.meshgrid(x_range, y_range)
+        Z = Model.ev(X,Y)
+        ax.plot_surface(X,Y,Z, color='red', alpha=0.5)
+        ax.set_xlabel('Pressure')
+        ax.set_ylabel('Temperature')
+        ax.set_zlabel('Solubility')
+        plt.show()
+        """
+
+
         return Model
 
     def interpolateSolubilityData(self):
@@ -269,7 +289,7 @@ class fitCrossAndWLF():
         residual = np.sum(np.abs(logFxn-logData))
         if residual < self.mini:
             self.mini = residual
-            print(residual)
+            #print(residual)
         return residual
 
     #model for use and not for fitting. Good for getting outputs:
@@ -315,7 +335,7 @@ class fitCrossAndWLF():
 
     def runWLFModelT(self, x, T):
         params = self.mostRecentParams
-        return self.WLFModel(x,Temperature,self.TRef,params[0],params[1])
+        return self.WLFModel(x,T,self.TRef,params[0],params[1])
 
     #Returns a shift factor for S
     def runWLFModelS(self, x, S):
@@ -326,6 +346,9 @@ class fitCrossAndWLF():
         params = self.mostRecentParams
         return self.workingWLFCrossModel3(x,params)
 
+    #Returns solu data given T, P (C, Bar), returns in g/kg
+    def evaluateSolubility(self,T,P):
+        return self.SolubilityModel.ev(P,T)
 
 
 ##################################################################
