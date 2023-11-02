@@ -302,18 +302,22 @@ def plotOptimizer(expData, Temperature, Pressure):
 
     #plt.xscale("log")
 
-    plt.show()
+    plt.savefig("./figures/"+str(Temperature)+"-"+str(Pressure)+"FitParam.png", dpi = 500)
  
-    
+    plt.close()
     return Dexp
 
+def readLiteratureData():
+    LiteratureDataLoc = "./TrainingData/MiscFiles/DataFromLiterature.xlsx"
+    
+    LiteratureData = pd.read_excel(LiteratureDataLoc)
+    return LiteratureData
 
 
 
 
 
-
-TPlist = [(100,120),(100,130),(20,150),(40,150),(80,120),(80,130),(80,150)]
+TPlist = [(100,120),(100,130),(40,150),(80,120),(80,130),(80,150)]
 #TPlist = [(100,120)]
 
 T = 120
@@ -326,13 +330,41 @@ for val in TPlist:
     
     ExperimentalData = importData("./TrainingData/"+str(P)+"-"+str(T)+".csv")
     D = plotOptimizer(ExperimentalData, T,P)
-    DList.append((T,P,D))
+    DList.append((T+273,P*0.1,10**D))
 
-DataFrameList = pd.DataFrame(data = DList, columns = ["Temp","Pressure", "D"])
+DataFrameList = pd.DataFrame(data = DList, columns = ["Temperature (K)","Average pressure (MPa)", "D"])
+DataFrameList["From"] = "Experimental"
+litData = readLiteratureData()
+fullData = pd.concat([litData,DataFrameList])
 print(DataFrameList)
 
-figure1 = sns.relplot(data = DataFrameList, x = "Temp", y = "D", hue = "Pressure")
-#figure1.set()
+
+#########################################################################################  #########################################################################################    
+#style guidelines for Seaborne
+sns.set(rc={"xtick.top" : True, "ytick.right" : True})
+sns.set_theme()  
+sns.set_style(style='white')
+sns.set_style("ticks")
+
+sns.set_style({"xtick.direction": "in","ytick.direction": "in"})
+
+
+#########################################################################################  #########################################################################################    
+
+figure1 = sns.relplot(data = fullData, x = "Temperature (K)", y = "D", hue = "From", s = 100,facet_kws=dict(despine=False))
+figure1.set(yscale = "log")
+
+
+figure1.set_axis_labels( "Temperature (K)",  "Diffusion Constant (m^2/s)", fontsize = 20)
+
+for ax in figure1.axes.ravel():
+        
+        ax.tick_params(which="both", right=True, labelsize = 15)
+        ax.tick_params(which="both", top=True)
+        ax.tick_params(which = "both",left=True, labelsize = 15)
+plt.savefig("./figures/"+"DConstantVsLit.png", dpi = 1000,bbox_inches = 'tight')
+        
+#figure1.set(xscale="log")
 plt.show()
 """
 fig = plt.figure()
